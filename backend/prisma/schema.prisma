@@ -1,0 +1,280 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+//
+// ENUMS
+//
+enum UserRole {
+  admin
+  member
+  staff
+}
+
+enum UserStatus {
+  active
+  inactive
+}
+
+enum AuctionStatus {
+  pending
+  complete
+}
+
+enum PaymentStatus {
+  paid
+  pending
+  overdue
+}
+
+enum PaymentMode {
+  upi
+  cash
+  bank
+}
+
+enum TransactionType {
+  contribution
+  penalty
+  dividend
+  winner_payout
+}
+
+enum DocumentType {
+  aadhaar
+  pan
+  photo
+}
+
+enum NotificationChannel {
+  sms
+  whatsapp
+  email
+}
+
+//
+// 1) USERS
+//
+model User {
+  id            BigInt       @id @default(autoincrement())
+  name          String
+  phone         String        @unique
+  email         String?       @unique
+  password_hash String
+  role          UserRole      @default(member)
+  status        UserStatus    @default(active)
+  created_at    DateTime      @default(now())
+
+  group_members        GroupMember[]
+  contributions        Contribution[]
+  penalties            Penalty[]
+  winner_auctions      Auction[]        @relation("AuctionWinner")
+  bids                 Bid[]
+  kyc_documents        Document[]
+  notifications        Notification[]
+  ledger_entries       Ledger[]
+}
+
+//
+// 2) GROUPS
+//
+model Group {
+  id                    BigInt        @id @default(autoincrement())
+  group_name            String
+  group_code            String        @unique
+  chit_value            Float
+  total_members         Int
+  monthly_contribution  Float
+  start_date            DateTime
+  status                String        
+  
+  // Settings
+  due_date              Int           @default(10) // Day of month
+  penalty_type          String        @default("fixed") // fixed, daily, percentage
+  penalty_amount        Float         @default(0)        
+
+  created_at            DateTime      @default(now())
+
+  group_members         GroupMember[]
+  cycles                Cycle[]
+  auctions              Auction[]
+  contributions         Contribution[]
+  ledger_entries        Ledger[]
+}
+
+//
+// 3) GROUP MEMBERS
+//
+model GroupMember {
+  id               BigInt      @id @default(autoincrement())
+  group_id         BigInt
+  user_id          BigInt
+  join_date        DateTime
+  nominee_name     String?
+  nominee_phone    String?
+  won_status       Boolean     @default(false)
+  order_of_winning Int?
+
+  group            Group       @relation(fields: [group_id], references: [id])
+  user             User        @relation(fields: [user_id], references: [id])
+
+  contributions    Contribution[]
+  penalties        Penalty[]
+}
+
+//
+// 4) CYCLES
+//
+model Cycle {
+  id                        BigInt      @id @default(autoincrement())
+  group_id                  BigInt
+  cycle_number              Int
+  cycle_month_year          String
+  auction_status            AuctionStatus
+  total_collection_expected Float
+  total_collection_received Float     @default(0)
+
+  group                     Group       @relation(fields: [group_id], references: [id])
+  contributions             Contribution[]
+  penalties                 Penalty[]
+  auction                   Auction?
+
+  ledger_entries            Ledger[]
+}
+
+//
+// 5) CONTRIBUTIONS
+//
+model Contribution {
+  id              BigInt      @id @default(autoincrement())
+  group_id        BigInt
+  user_id         BigInt
+  cycle_id        BigInt
+  group_member_id BigInt
+
+  amount_payable  Float
+  amount_paid     Float       @default(0)
+  payment_mode    PaymentMode?
+  payment_status  PaymentStatus
+  payment_date    DateTime?
+  reference_no    String?
+  is_partial      Boolean     @default(false)
+
+  group           Group        @relation(fields: [group_id], references: [id])
+  user            User         @relation(fields: [user_id], references: [id])
+  cycle           Cycle        @relation(fields: [cycle_id], references: [id])
+  group_member    GroupMember  @relation(fields: [group_member_id], references: [id])
+
+  penalties       Penalty[]
+  ledger_entries  Ledger[]
+}
+
+//
+// 6) PENALTIES
+//
+model Penalty {
+  id              BigInt      @id @default(autoincrement())
+  contribution_id BigInt
+  user_id         BigInt
+  cycle_id        BigInt
+  group_member_id BigInt
+
+  penalty_amount  Float
+  applied_date    DateTime
+  reason          String
+
+  contribution    Contribution @relation(fields: [contribution_id], references: [id])
+  user            User         @relation(fields: [user_id], references: [id])
+  cycle           Cycle        @relation(fields: [cycle_id], references: [id])
+  group_member    GroupMember  @relation(fields: [group_member_id], references: [id])
+}
+
+//
+// 7) AUCTIONS
+//
+model Auction {
+  id                   BigInt        @id @default(autoincrement())
+  group_id             BigInt
+  cycle_id             BigInt        @unique
+  auction_date         DateTime
+  auction_type         String
+  winner_user_id       BigInt?
+  winning_bid_amount   Float?
+  winner_payout_amount Float?
+  dividend_per_member  Float?
+  status               AuctionStatus
+
+  group                Group         @relation(fields: [group_id], references: [id])
+  cycle                Cycle         @relation(fields: [cycle_id], references: [id])
+  winner               User?         @relation("AuctionWinner", fields: [winner_user_id], references: [id])
+
+  bids                 Bid[]
+}
+
+//
+// 8) BIDS
+//
+model Bid {
+  id           BigInt     @id @default(autoincrement())
+  auction_id   BigInt
+  user_id      BigInt
+  bid_amount   Float
+  bid_time     DateTime   @default(now())
+
+  auction      Auction    @relation(fields: [auction_id], references: [id])
+  user         User       @relation(fields: [user_id], references: [id])
+}
+
+//
+// 9) LEDGER
+//
+model Ledger {
+  id               BigInt         @id @default(autoincrement())
+  user_id          BigInt
+  group_id         BigInt
+  cycle_id         BigInt?
+  contribution_id  BigInt?
+
+  transaction_type TransactionType
+  amount           Float
+  balance_after    Float
+  date             DateTime       @default(now())
+  notes            String?
+
+  user             User           @relation(fields: [user_id], references: [id])
+  group            Group          @relation(fields: [group_id], references: [id])
+  cycle            Cycle?         @relation(fields: [cycle_id], references: [id])
+  contribution     Contribution?  @relation(fields: [contribution_id], references: [id])
+}
+
+//
+// 10) DOCUMENTS
+//
+model Document {
+  id          BigInt      @id @default(autoincrement())
+  user_id     BigInt
+  doc_type    DocumentType
+  file_url    String
+  uploaded_at DateTime     @default(now())
+
+  user        User        @relation(fields: [user_id], references: [id])
+}
+
+//
+// 11) NOTIFICATIONS
+//
+model Notification {
+  id            BigInt       @id @default(autoincrement())
+  user_id       BigInt
+  message_type  String
+  channel       NotificationChannel
+  status        String
+  sent_at       DateTime      @default(now())
+
+  user          User          @relation(fields: [user_id], references: [id])
+}
